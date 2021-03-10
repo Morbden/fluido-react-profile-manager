@@ -1,0 +1,47 @@
+{
+  "name": "@fluido/react-profile-manager",
+  "version": "0.1.1",
+  "description": "Fluido profile manager",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Morbden/fluido-react-profile-manager.git"
+  },
+  "keywords": [
+    "fluido",
+    "profile-manager",
+    "firebase",
+    "firebase-auth",
+    "auth",
+    "react"
+  ],
+  "author": "Morbden",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "pub": "npm publish --access public"
+  },
+  "dependencies": {
+    "@hookstate/core": "^3.0.6",
+    "@hookstate/persistence": "^3.0.0",
+    "cookie": "^0.4.1",
+    "deep-equal": "^2.0.5",
+    "deepmerge": "^4.2.2",
+    "uid": "^2.0.0"
+  },
+  "peerDependencies": {
+    "react": "^17.0.1",
+    "react-dom": "^17.0.1",
+    "firebase": "^8.2.10"
+  },
+  "devDependencies": {
+    "@types/node": "^14.14.33",
+    "@types/react": "^17.0.3",
+    "firebase": "^8.2.10",
+    "react": "^17.0.1",
+    "react-dom": "^17.0.1",
+    "typescript": "^4.2.3"
+  }
+}
