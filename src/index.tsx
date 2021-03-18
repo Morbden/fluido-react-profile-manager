@@ -113,25 +113,27 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
   // FCM Loader
   useEffect(() => {
     if (!isSSR && FCMKey) {
-      FCMToken.set('loading')
-      const messaging = firebaseApp.messaging()
-      messaging
-        .getToken({ vapidKey: FCMKey })
-        .then(async (token) => {
-          if (token) {
-            FCMToken.set(token)
-          } else {
-            FCMToken.set('required')
-          }
-        })
-        .catch((err: Error) => {
-          if (err.message.includes('permission-blocked')) {
-            FCMToken.set('required')
-          } else {
-            console.log(err)
-          }
-          FCMToken.set('error')
-        })
+      try {
+        FCMToken.set('loading')
+        const messaging = firebaseApp.messaging()
+        messaging
+          .getToken({ vapidKey: FCMKey })
+          .then(async (token) => {
+            if (token) {
+              FCMToken.set(token)
+            } else {
+              FCMToken.set('required')
+            }
+          })
+          .catch((err: Error) => {
+            if (err.message.includes('permission-blocked')) {
+              FCMToken.set('required')
+            } else {
+              console.log(err)
+            }
+            FCMToken.set('error')
+          })
+      } catch (err) {}
     }
   }, [isSSR, FCMKey])
 
