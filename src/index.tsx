@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useLayoutEffect } from 'react'
 import { createState, useState } from '@hookstate/core'
 import firebase from 'firebase'
 
@@ -7,7 +7,9 @@ export interface ProfileProps {
   logged: boolean
   user: firebase.User
   userToken: string
-  claims: string[]
+  claims: {
+    [key: string]: string[]
+  }
 }
 
 export interface ProfileManagerProps {
@@ -27,20 +29,12 @@ const ProfileState = createState<ProfileProps>({
   logged: false,
   user: null,
   userToken: null,
-  claims: [],
+  claims: {},
 })
 
 export const useProfile = () => useState<ProfileProps>(ProfileState)
 
 export const ProfileFCMToken = createState<ProfileFCMTokenType>('waiting')
-
-const testIsSSR = () => {
-  try {
-    return !window
-  } catch (err) {
-    return true
-  }
-}
 
 const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
   firebaseApp,
@@ -51,26 +45,26 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
   loggedRedirectRoutePaths = [],
   publicRoutePaths = ['/'],
 }) => {
-  const isSSR = testIsSSR()
   // FCM config
   const FCMToken = useState(ProfileFCMToken)
 
   // Profile Provider
   const profile = useProfile()
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let metaRef: firebase.database.Reference
-
-    const callback = (snapshot: firebase.database.DataSnapshot) => {
-      profile.merge({
-        loaded: true,
-        claims: snapshot.val() || {},
-      })
-    }
+    let claimsRef: firebase.database.Reference
+    let callback: VoidFunction = null
     return firebaseApp.auth().onAuthStateChanged((user) => {
       if (metaRef) {
         metaRef.off('value', callback)
         metaRef = null
+        callback = null
+      }
+
+      if (claimsRef) {
+        claimsRef.off()
+        claimsRef = null
       }
 
       profile.merge({
@@ -79,14 +73,23 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
       })
 
       if (user) {
-        user.getIdToken(true).then((token) => {
+        callback = () => {
+          user.getIdToken(true).then((token) => {
+            profile.merge({
+              userToken: token,
+            })
+          })
+        }
+
+        metaRef = firebaseApp.database().ref(`users/${user.uid}/claims/refresh`)
+        metaRef.on('value', callback)
+
+        claimsRef = firebaseApp.database().ref(`users/${user.uid}/claims`)
+        claimsRef.on('value', (snapshot) => {
           profile.merge({
-            userToken: token,
+            claims: snapshot.val(),
           })
         })
-
-        metaRef = firebaseApp.database().ref(`users/${user.uid}/claims`)
-        metaRef.on('value', callback)
       } else {
         profile.merge({
           loaded: true,
@@ -94,11 +97,11 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
         })
       }
     })
-  }, [isSSR])
+  }, [])
 
   // Page blocker
-  useEffect(() => {
-    if (!isSSR && profile.loaded.value) {
+  useLayoutEffect(() => {
+    if (profile.loaded.value) {
       if (!profile.logged.value && !publicRoutePaths.includes(pathname)) {
         if (onCallLoginRoute) onCallLoginRoute()
       } else if (
@@ -108,11 +111,11 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
         if (onCallHomeRoute) onCallHomeRoute()
       }
     }
-  }, [isSSR, profile.logged.value, profile.loaded.value, pathname])
+  }, [profile.logged.value, profile.loaded.value, pathname])
 
   // FCM Loader
-  useEffect(() => {
-    if (!isSSR && FCMKey) {
+  useLayoutEffect(() => {
+    if (FCMKey) {
       try {
         FCMToken.set('loading')
         const messaging = firebaseApp.messaging()
@@ -135,11 +138,10 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
           })
       } catch (err) {}
     }
-  }, [isSSR, FCMKey])
+  }, [FCMKey])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (
-      !isSSR &&
       profile.logged.value &&
       profile.loaded.value &&
       FCMToken.value &&
@@ -150,7 +152,7 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
         .ref(`users/${profile.user.value.uid}/fcm`)
         .set(FCMToken.value)
     }
-  }, [isSSR, FCMToken.value, profile.logged.value, profile.loaded.value])
+  }, [FCMToken.value, profile.logged.value, profile.loaded.value])
 
   return null
 }
