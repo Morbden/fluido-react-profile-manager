@@ -1,6 +1,6 @@
 {
   "name": "@fluido/react-profile-manager",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Fluido profile manager",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,25 +25,23 @@
     "pub:all": "run-s build pub"
   },
   "dependencies": {
-    "@hookstate/core": "^3.0.6",
-    "@hookstate/persistence": "^3.0.0",
     "cookie": "^0.4.1",
     "deep-equal": "^2.0.5",
     "deepmerge": "^4.2.2",
-    "uid": "^2.0.0"
+    "uuid": "^8.3.2"
   },
   "peerDependencies": {
+    "firebase": "^8.7.1",
     "react": "^17.0.2",
-    "react-dom": "^17.0.2",
-    "firebase": "^8.4.1"
+    "react-dom": "^17.0.2"
   },
   "devDependencies": {
-    "@types/node": "^14.14.37",
-    "@types/react": "^17.0.3",
-    "firebase": "^8.4.1",
+    "@types/node": "^16.3.3",
+    "@types/react": "^17.0.14",
+    "firebase": "^8.7.1",
     "npm-run-all": "^4.1.5",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
-    "typescript": "^4.2.4"
+    "typescript": "^4.3.5"
   }
 }

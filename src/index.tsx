@@ -1,63 +1,69 @@
-import { useLayoutEffect } from 'react'
-import { createState, useState } from '@hookstate/core'
+import { useLayoutEffect, useContext, createContext, useState } from 'react'
 import firebase from 'firebase'
 
+type FCMTokenStateType = 'loading' | 'error' | 'required' | 'ready'
+
+interface TypedMap<T = any> {
+  [key: string]: T
+}
+
 export interface ProfileProps {
-  loaded: boolean
+  ready: boolean
   logged: boolean
-  user: firebase.User
-  userToken: string
-  claims: {
-    [key: string]: string[]
-  }
+  user: firebase.User | null
+  token: string | null
+  FCMToken: string | null
+  FCMState: FCMTokenStateType | null
+  claims: TypedMap<string | string[]>
 }
 
 export interface ProfileManagerProps {
-  FCMKey?: string
   firebaseApp: firebase.app.App
-  onCallHomeRoute?: VoidFunction
-  onCallLoginRoute?: VoidFunction
   pathname?: string
-  loggedRedirectRoutePaths?: string[]
-  publicRoutePaths?: string[]
+  FCMKey?: string
+  onCallRedirectToPublic?: VoidFunction
+  onCallRedirectToAuthenticated?: VoidFunction
+  unauthenticatedRoutes?: string[]
+  authenticatedRoutes?: string[]
 }
 
-type ProfileFCMTokenType = 'waiting' | 'loading' | 'error' | 'required' | string
-
-const ProfileState = createState<ProfileProps>({
-  loaded: false,
+const ProfileContext = createContext<ProfileProps>({
+  ready: false,
   logged: false,
   user: null,
-  userToken: null,
+  token: null,
+  FCMToken: null,
+  FCMState: null,
   claims: {},
 })
 
-export const useProfile = () => useState<ProfileProps>(ProfileState)
+export const useProfile = () => useContext(ProfileContext)
 
-export const ProfileFCMToken = createState<ProfileFCMTokenType>('waiting')
-
-const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
+export default function ProfileProvider({
+  children,
   firebaseApp,
-  FCMKey,
-  onCallHomeRoute,
-  onCallLoginRoute,
   pathname,
-  loggedRedirectRoutePaths = [],
-  publicRoutePaths = ['/'],
-}) => {
-  // FCM config
-  const FCMToken = useState(ProfileFCMToken)
-
+  FCMKey,
+  onCallRedirectToPublic,
+  onCallRedirectToAuthenticated,
+  unauthenticatedRoutes = ['/login'],
+  authenticatedRoutes = [],
+}: React.PropsWithChildren<ProfileManagerProps>) {
   // Profile Provider
-  const profile = useProfile()
+  const [ready, setReady] = useState<boolean>(false)
+  const [user, setUser] = useState<firebase.User | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+  const [FCMToken, setFCMToken] = useState<string | null>(null)
+  const [FCMState, setFCMState] = useState<FCMTokenStateType | null>()
+  const [claims, setClaims] = useState<TypedMap<string | string[]>>()
 
   useLayoutEffect(() => {
     let metaRef: firebase.database.Reference
     let claimsRef: firebase.database.Reference
     let callback: VoidFunction = null
-    return firebaseApp.auth().onAuthStateChanged((user) => {
+    const unregister = firebaseApp.auth().onAuthStateChanged((user) => {
       if (metaRef) {
-        metaRef.off('value', callback)
+        metaRef.off()
         metaRef = null
         callback = null
       }
@@ -67,94 +73,100 @@ const ProfileManager: React.FunctionComponent<ProfileManagerProps> = ({
         claimsRef = null
       }
 
-      profile.merge({
-        logged: !!user,
-        user,
-      })
+      setUser(user)
 
       if (user) {
         callback = () => {
           user.getIdToken(true).then((token) => {
-            profile.merge({
-              userToken: token,
-            })
+            setToken(token)
           })
         }
 
-        metaRef = firebaseApp.database().ref(`users/${user.uid}/claims/refresh`)
+        metaRef = firebaseApp.database().ref(`users/${user.uid}/claims-refresh`)
         metaRef.on('value', callback)
 
         claimsRef = firebaseApp.database().ref(`users/${user.uid}/claims`)
         claimsRef.on('value', (snapshot) => {
-          profile.merge({
-            claims: snapshot.val(),
-          })
+          setReady(true)
+          if (snapshot.exists()) {
+            setClaims(snapshot.val())
+          } else {
+            setClaims({})
+          }
         })
       } else {
-        profile.merge({
-          loaded: true,
-          userToken: null,
-        })
+        setReady(true)
+        setToken(null)
       }
     })
+
+    return () => {
+      unregister()
+      metaRef && metaRef.off()
+      claimsRef && claimsRef.off()
+    }
   }, [])
 
   // Page blocker
   useLayoutEffect(() => {
-    if (profile.loaded.value) {
-      if (!profile.logged.value && !publicRoutePaths.includes(pathname)) {
-        if (onCallLoginRoute) onCallLoginRoute()
-      } else if (
-        profile.logged.value &&
-        loggedRedirectRoutePaths.includes(pathname)
-      ) {
-        if (onCallHomeRoute) onCallHomeRoute()
-      }
+    if (!ready) return
+
+    if (!user && authenticatedRoutes.includes(pathname)) {
+      onCallRedirectToPublic && onCallRedirectToPublic()
+    } else if (!!user && unauthenticatedRoutes.includes(pathname)) {
+      onCallRedirectToAuthenticated && onCallRedirectToAuthenticated()
     }
-  }, [profile.logged.value, profile.loaded.value, pathname])
+  }, [ready, !!user, pathname])
 
   // FCM Loader
   useLayoutEffect(() => {
-    if (FCMKey) {
-      try {
-        FCMToken.set('loading')
-        const messaging = firebaseApp.messaging()
-        messaging
-          .getToken({ vapidKey: FCMKey })
-          .then(async (token) => {
-            if (token) {
-              FCMToken.set(token)
-            } else {
-              FCMToken.set('required')
-            }
-          })
-          .catch((err: Error) => {
-            if (err.message.includes('permission-blocked')) {
-              FCMToken.set('required')
-            } else {
-              console.log(err)
-            }
-            FCMToken.set('error')
-          })
-      } catch (err) {}
+    if (!FCMKey) return
+
+    setFCMState('loading')
+    setFCMToken(null)
+    try {
+      const messaging = firebaseApp.messaging()
+      messaging
+        .getToken({ vapidKey: FCMKey })
+        .then(async (token) => {
+          if (token) {
+            setFCMToken(token)
+            setFCMState('ready')
+          } else {
+            setFCMState('required')
+          }
+        })
+        .catch((err: Error) => {
+          if (err.message.includes('permission-blocked')) {
+            setFCMState('required')
+          } else {
+            console.log(err)
+          }
+          setFCMState('error')
+        })
+    } catch (err) {
+      setFCMState('error')
     }
   }, [FCMKey])
 
   useLayoutEffect(() => {
-    if (
-      profile.logged.value &&
-      profile.loaded.value &&
-      FCMToken.value &&
-      !['error', 'required', 'loading', 'waiting'].includes(FCMToken.value)
-    ) {
-      firebaseApp
-        .database()
-        .ref(`users/${profile.user.value.uid}/fcm`)
-        .set(FCMToken.value)
+    if (ready && !!user && FCMToken && FCMState === 'ready') {
+      firebaseApp.database().ref(`users/${user.uid}/fcm`).set(FCMToken)
     }
-  }, [FCMToken.value, profile.logged.value, profile.loaded.value])
+  }, [ready, !!user, FCMToken, FCMState])
 
-  return null
+  return (
+    <ProfileContext.Provider
+      value={{
+        user,
+        logged: !!user,
+        claims,
+        ready,
+        token,
+        FCMToken,
+        FCMState,
+      }}>
+      {children}
+    </ProfileContext.Provider>
+  )
 }
-
-export default ProfileManager
