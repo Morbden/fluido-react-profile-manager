@@ -19,6 +19,7 @@ export interface ProfileProps {
 
 export interface ProfileManagerProps {
   firebaseApp: firebase.app.App
+  dbUse?: 'firestore' | 'database'
   pathname?: string
   FCMKey?: string
   onCallRedirectToPublic?: VoidFunction
@@ -42,6 +43,7 @@ export const useProfile = () => useContext(ProfileContext)
 export default function ProfileProvider({
   children,
   firebaseApp,
+  dbUse = 'database',
   pathname,
   FCMKey,
   onCallRedirectToPublic,
@@ -57,55 +59,112 @@ export default function ProfileProvider({
   const [FCMState, setFCMState] = useState<FCMTokenStateType | null>()
   const [claims, setClaims] = useState<TypedMap<string | string[]>>()
 
-  useLayoutEffect(() => {
-    let metaRef: firebase.database.Reference
-    let claimsRef: firebase.database.Reference
-    let callback: VoidFunction = null
-    const unregister = firebaseApp.auth().onAuthStateChanged((user) => {
-      if (metaRef) {
-        metaRef.off()
-        metaRef = null
-        callback = null
-      }
-
-      if (claimsRef) {
-        claimsRef.off()
-        claimsRef = null
-      }
-
-      setUser(user)
-
-      if (user) {
-        callback = () => {
-          user.getIdToken(true).then((token) => {
-            setToken(token)
-          })
+  if (dbUse === 'database') {
+    useLayoutEffect(() => {
+      let metaRef: firebase.database.Reference
+      let claimsRef: firebase.database.Reference
+      let callback: VoidFunction = null
+      const unregister = firebaseApp.auth().onAuthStateChanged((user) => {
+        if (metaRef) {
+          metaRef.off()
+          metaRef = null
+          callback = null
         }
 
-        metaRef = firebaseApp.database().ref(`users/${user.uid}/claims-refresh`)
-        metaRef.on('value', callback)
+        if (claimsRef) {
+          claimsRef.off()
+          claimsRef = null
+        }
 
-        claimsRef = firebaseApp.database().ref(`users/${user.uid}/claims`)
-        claimsRef.on('value', (snapshot) => {
-          setReady(true)
-          if (snapshot.exists()) {
-            setClaims(snapshot.val())
-          } else {
-            setClaims({})
+        setUser(user)
+
+        if (user) {
+          callback = () => {
+            user.getIdToken(true).then((token) => {
+              setToken(token)
+            })
           }
-        })
-      } else {
-        setReady(true)
-        setToken(null)
-      }
-    })
 
-    return () => {
-      unregister()
-      metaRef && metaRef.off()
-      claimsRef && claimsRef.off()
-    }
-  }, [])
+          metaRef = firebaseApp
+            .database()
+            .ref(`users/${user.uid}/claims-refresh`)
+          metaRef.on('value', callback)
+
+          claimsRef = firebaseApp.database().ref(`users/${user.uid}/claims`)
+          claimsRef.on('value', (snapshot) => {
+            setReady(true)
+            if (snapshot.exists()) {
+              setClaims(snapshot.val())
+            } else {
+              setClaims({})
+            }
+          })
+        } else {
+          setReady(true)
+          setToken(null)
+        }
+      })
+
+      return () => {
+        unregister()
+        metaRef && metaRef.off()
+        claimsRef && claimsRef.off()
+      }
+    }, [dbUse])
+  } else if (dbUse === 'firestore') {
+    useLayoutEffect(() => {
+      let unregisterSnaps: VoidFunction[] = []
+      const unregister = firebaseApp.auth().onAuthStateChanged((user) => {
+        unregisterSnaps.forEach((e) => e())
+        unregisterSnaps = []
+
+        setUser(user)
+
+        if (user) {
+          const userRef = firebase.firestore().doc(`users/${user.uid}`)
+          const claimsRef = userRef.collection(`claims`)
+
+          let latestDate: Date
+          unregisterSnaps.push(
+            userRef.onSnapshot((snap) => {
+              const refresh = snap.data()
+                .claimsRefresh as firebase.firestore.Timestamp
+              const refreshDate = refresh.toDate()
+              if (!latestDate || refreshDate > latestDate) {
+                user.getIdToken(true).then((token) => {
+                  setToken(token)
+                })
+              }
+              latestDate = refreshDate
+            }),
+          )
+
+          unregisterSnaps.push(
+            claimsRef.onSnapshot((snapshot) => {
+              setReady(true)
+              if (!snapshot.empty) {
+                setClaims(
+                  snapshot.docs.reduce((prev, doc) => {
+                    return { ...prev, [doc.id]: Object.values(doc.data()) }
+                  }, {}),
+                )
+              } else {
+                setClaims({})
+              }
+            }),
+          )
+        } else {
+          setReady(true)
+          setToken(null)
+        }
+      })
+
+      return () => {
+        unregister()
+        unregisterSnaps.forEach((e) => e())
+      }
+    }, [dbUse])
+  }
 
   // Page blocker
   useLayoutEffect(() => {
