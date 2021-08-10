@@ -124,24 +124,12 @@ export default function ProfileProvider({
           const userRef = firebase.firestore().doc(`users/${user.uid}`)
           const claimsRef = userRef.collection(`claims`)
 
-          let latestDate: Date
-          unregisterSnaps.push(
-            userRef.onSnapshot((snap) => {
-              const refresh = snap.data()
-                .claimsRefresh as firebase.firestore.Timestamp
-              const refreshDate = refresh.toDate()
-              if (!latestDate || refreshDate > latestDate) {
-                user.getIdToken(true).then((token) => {
-                  setToken(token)
-                })
-              }
-              latestDate = refreshDate
-            }),
-          )
-
           unregisterSnaps.push(
             claimsRef.onSnapshot((snapshot) => {
               setReady(true)
+              user.getIdToken(true).then((token) => {
+                setToken(token)
+              })
               if (!snapshot.empty) {
                 setClaims(
                   snapshot.docs.reduce((prev, doc) => {
