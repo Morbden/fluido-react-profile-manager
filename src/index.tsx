@@ -1,5 +1,14 @@
-import { useLayoutEffect, useContext, createContext, useState } from 'react'
-import firebase from 'firebase'
+import { FirebaseApp } from 'firebase/app'
+import { getAuth, onAuthStateChanged, User } from 'firebase/auth'
+import {
+  collection,
+  doc,
+  getFirestore,
+  onSnapshot,
+  setDoc,
+} from 'firebase/firestore'
+import { getMessaging, getToken } from 'firebase/messaging'
+import { createContext, useContext, useLayoutEffect, useState } from 'react'
 
 type FCMTokenStateType = 'loading' | 'error' | 'required' | 'ready'
 
@@ -10,7 +19,7 @@ interface TypedMap<T = any> {
 export interface ProfileProps {
   ready: boolean
   logged: boolean
-  user: firebase.User | null
+  user: User | null
   token: string | null
   FCMToken: string | null
   FCMState: FCMTokenStateType | null
@@ -18,7 +27,7 @@ export interface ProfileProps {
 }
 
 export interface ProfileManagerProps {
-  firebaseApp: firebase.app.App
+  firebaseApp: FirebaseApp
   dbUse?: 'firestore' | 'database'
   pathname?: string
   FCMKey?: string
@@ -43,7 +52,6 @@ export const useProfile = () => useContext(ProfileContext)
 export default function ProfileProvider({
   children,
   firebaseApp,
-  dbUse = 'database',
   pathname,
   FCMKey,
   onCallRedirectToPublic,
@@ -53,106 +61,54 @@ export default function ProfileProvider({
 }: React.PropsWithChildren<ProfileManagerProps>) {
   // Profile Provider
   const [ready, setReady] = useState<boolean>(false)
-  const [user, setUser] = useState<firebase.User | null>(null)
+  const [user, setUser] = useState<User | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [FCMToken, setFCMToken] = useState<string | null>(null)
   const [FCMState, setFCMState] = useState<FCMTokenStateType | null>()
   const [claims, setClaims] = useState<TypedMap<string | string[]>>()
 
-  if (dbUse === 'database') {
-    useLayoutEffect(() => {
-      let metaRef: firebase.database.Reference
-      let claimsRef: firebase.database.Reference
-      let callback: VoidFunction = null
-      const unregister = firebaseApp.auth().onAuthStateChanged((user) => {
-        if (metaRef) {
-          metaRef.off()
-          metaRef = null
-          callback = null
-        }
+  useLayoutEffect(() => {
+    let unregisterSnaps: VoidFunction[] = []
+    const auth = getAuth(firebaseApp)
+    const unregister = onAuthStateChanged(auth, (user) => {
+      unregisterSnaps.forEach((e) => e())
+      unregisterSnaps = []
 
-        if (claimsRef) {
-          claimsRef.off()
-          claimsRef = null
-        }
+      setUser(user)
 
-        setUser(user)
+      if (user) {
+        const db = getFirestore(firebaseApp)
+        const userRef = doc(db, `users/${user.uid}`)
+        const claimsRef = collection(userRef, `claims`)
 
-        if (user) {
-          callback = () => {
+        unregisterSnaps.push(
+          onSnapshot(claimsRef, (snapshot) => {
+            setReady(true)
             user.getIdToken(true).then((token) => {
               setToken(token)
             })
-          }
-
-          metaRef = firebaseApp
-            .database()
-            .ref(`users/${user.uid}/claims-refresh`)
-          metaRef.on('value', callback)
-
-          claimsRef = firebaseApp.database().ref(`users/${user.uid}/claims`)
-          claimsRef.on('value', (snapshot) => {
-            setReady(true)
-            if (snapshot.exists()) {
-              setClaims(snapshot.val())
+            if (!snapshot.empty) {
+              setClaims(
+                snapshot.docs.reduce((prev, doc) => {
+                  return { ...prev, [doc.id]: Object.values(doc.data()) }
+                }, {}),
+              )
             } else {
               setClaims({})
             }
-          })
-        } else {
-          setReady(true)
-          setToken(null)
-        }
-      })
-
-      return () => {
-        unregister()
-        metaRef && metaRef.off()
-        claimsRef && claimsRef.off()
+          }),
+        )
+      } else {
+        setReady(true)
+        setToken(null)
       }
-    }, [dbUse])
-  } else if (dbUse === 'firestore') {
-    useLayoutEffect(() => {
-      let unregisterSnaps: VoidFunction[] = []
-      const unregister = firebaseApp.auth().onAuthStateChanged((user) => {
-        unregisterSnaps.forEach((e) => e())
-        unregisterSnaps = []
+    })
 
-        setUser(user)
-
-        if (user) {
-          const userRef = firebase.firestore().doc(`users/${user.uid}`)
-          const claimsRef = userRef.collection(`claims`)
-
-          unregisterSnaps.push(
-            claimsRef.onSnapshot((snapshot) => {
-              setReady(true)
-              user.getIdToken(true).then((token) => {
-                setToken(token)
-              })
-              if (!snapshot.empty) {
-                setClaims(
-                  snapshot.docs.reduce((prev, doc) => {
-                    return { ...prev, [doc.id]: Object.values(doc.data()) }
-                  }, {}),
-                )
-              } else {
-                setClaims({})
-              }
-            }),
-          )
-        } else {
-          setReady(true)
-          setToken(null)
-        }
-      })
-
-      return () => {
-        unregister()
-        unregisterSnaps.forEach((e) => e())
-      }
-    }, [dbUse])
-  }
+    return () => {
+      unregister()
+      unregisterSnaps.forEach((e) => e())
+    }
+  }, [])
 
   // Page blocker
   useLayoutEffect(() => {
@@ -172,9 +128,8 @@ export default function ProfileProvider({
     setFCMState('loading')
     setFCMToken(null)
     try {
-      const messaging = firebaseApp.messaging()
-      messaging
-        .getToken({ vapidKey: FCMKey })
+      const messaging = getMessaging(firebaseApp)
+      getToken(messaging, { vapidKey: FCMKey })
         .then(async (token) => {
           if (token) {
             setFCMToken(token)
@@ -198,7 +153,9 @@ export default function ProfileProvider({
 
   useLayoutEffect(() => {
     if (ready && !!user && FCMToken && FCMState === 'ready') {
-      firebaseApp.database().ref(`users/${user.uid}/fcm`).set(FCMToken)
+      const db = getFirestore()
+      const userDoc = doc(db, `users/${user.uid}`)
+      setDoc(userDoc, { fcm: FCMToken }, { merge: true })
     }
   }, [ready, !!user, FCMToken, FCMState])
 
