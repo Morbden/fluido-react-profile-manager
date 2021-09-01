@@ -28,7 +28,6 @@ export interface ProfileProps {
 
 export interface ProfileManagerProps {
   firebaseApp: FirebaseApp
-  dbUse?: 'firestore' | 'database'
   pathname?: string
   FCMKey?: string
   onCallRedirectToPublic?: VoidFunction
