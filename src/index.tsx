@@ -28,6 +28,7 @@ export interface ProfileProps {
 
 export interface ProfileManagerProps {
   firebaseApp: FirebaseApp
+  refreshTokenTime?: number
   pathname?: string
   FCMKey?: string
   onCallRedirectToPublic?: VoidFunction
@@ -51,6 +52,7 @@ export const useProfile = () => useContext(ProfileContext)
 export default function ProfileProvider({
   children,
   firebaseApp,
+  refreshTokenTime = 20,
   pathname,
   FCMKey,
   onCallRedirectToPublic,
@@ -68,6 +70,7 @@ export default function ProfileProvider({
 
   useLayoutEffect(() => {
     let unregisterSnaps: VoidFunction[] = []
+
     const auth = getAuth(firebaseApp)
     const unregister = onAuthStateChanged(auth, (user) => {
       unregisterSnaps.forEach((e) => e())
@@ -97,6 +100,16 @@ export default function ProfileProvider({
             }
           }),
         )
+
+        const timerId = setInterval(
+          () =>
+            user.getIdToken(true).then((token) => {
+              setToken(token)
+            }),
+          1000 * refreshTokenTime,
+        )
+
+        unregisterSnaps.push(() => clearInterval(timerId))
       } else {
         setReady(true)
         setToken(null)
